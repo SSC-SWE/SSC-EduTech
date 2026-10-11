@@ -4,7 +4,7 @@ Improving technology for education.
 
 ## Abstract
 
-SSC-EduTech is an education-technology exploration of several AI systems, with each system tried on a different kind of school work. These notes record what each one was used for and what was actually written down. Amazon Quick (AWS) automates an Education Bureau (EDB) teacher-training path from the public calendar to a weekly email and then to the teacher's calendar, including a conflict message and an override reply. OpenManusBot is under test for multi-agent task automation and councils, with Composio connectors, a 20-minute turn limit, and a short rule against repeated tool calls. GrokBot is the desktop coordinator for orchestration, repository and site work, documentation, and handoffs to other agents, and was given a full software project to build: ASR, a local speech-recognition tool in my GitHub, where it worked through reviewable pull requests and deployed through computer control. A mixed GrokBot and Hermes case uses that same pull-request surface for review: the smarter Grok Bot model posts the final review comments, on an 8:30 pm HKT pass or on demand, and the cheaper bot on the Hermes server writes the code from those comments. A local Ollama and Qwen deployment was examined for on-prem privacy on one dual-GPU workstation. Z.ai assisted a printable mechanical design, a buoyancy profiling float, reproduced here as a four-panel print-plate figure. A later entry works through 3D modelling with ZCode and Kimi: generating STL files directly, drawing through Onshape's FeatureScript MCP, and the newer Kimi MCP route into Fusion 360 and Blender.
+SSC-EduTech is an education-technology exploration of several AI systems, with each system tried on a different kind of school work. These notes record what each one was used for and what was actually written down. Amazon Quick (AWS) automates an Education Bureau (EDB) teacher-training path from the public calendar to a weekly email and then to the teacher's calendar, including a conflict message and an override reply. OpenManusBot is under test for multi-agent task automation and councils, with Composio connectors, a 20-minute turn limit, and a short rule against repeated tool calls. GrokBot is the desktop coordinator for orchestration, repository and site work, documentation, and handoffs to other agents, and was given a full software project to build: ASR, a local speech-recognition tool in my GitHub, where it worked through reviewable pull requests and deployed through computer control. A mixed GrokBot and Hermes case uses that same pull-request surface for review: the smarter Grok Bot model posts the final review comments, on an 8:30 pm HKT pass or on demand, and the cheaper bot on the Hermes server writes the code from those comments. A local Ollama and Qwen deployment was examined for on-prem privacy on one dual-GPU workstation. Z.ai assisted a printable mechanical design, a buoyancy profiling float, reproduced here as a four-panel print-plate figure. A later entry works through 3D modelling with ZCode and Kimi: generating STL files directly, drawing through Onshape's FeatureScript MCP, and the newer Kimi MCP route into Fusion 360 and Blender. A final entry records a network workaround: an OpenRouter API key routed through a Vercel serverless function so Claude and OpenAI models can be called from school without a VPN.
 
 ## 1. Amazon Quick (AWS) Research
 
@@ -378,3 +378,26 @@ The first figure is the finished render; the second is the Blender viewport duri
 | Blender via Kimi MCP (v5.0+) | Yes, mesh | Not yet timed | Organic and artistic models |
 
 Timing and token counts for the two MCP routes are left for a later entry, as with the email flows in [Section 1](#1-amazon-quick-aws-research).
+
+## 7. OpenRouter through Vercel: calling Claude and OpenAI from school without a VPN
+
+This section records a network workaround built on 2026-10-08: putting an OpenRouter API key behind a Vercel serverless function so that frontier models (Claude, OpenAI) can be used from the school network without installing or running a VPN.
+
+### Motivation
+
+The school network blocks direct access to Claude and OpenAI; the usual workaround is a VPN, which is slow to set up on each machine and not something to install on school computers. OpenRouter, however, is reachable, and it exposes both Claude and OpenAI models through one API. The remaining problems were (1) the API key must not be embedded in anything a student could open, and (2) requests needed a home that is always on — hence a small serverless function on Vercel acting as a proxy: the client calls the function, the function holds the key as an environment variable and forwards the request to OpenRouter, and only the function's URL is ever shared.
+
+### Methods
+
+*This subsection is a placeholder — to be filled in with what was actually done.* The sketch of the route is: a Vercel project with one serverless/edge function that accepts a chat-completion request, attaches `Authorization: Bearer $OPENROUTER_API_KEY` from the project's environment variables, and relays the response. The key itself lives only in Vercel's project settings (and in the Hermes vault), never in the repo or the README.
+
+### Observations
+
+- With the route in place, Claude and OpenAI models can be called from school with no VPN: clients only need the function URL, which the school network does not block.
+- The key is no longer baked into any client: rotating it means updating one environment variable in the Vercel dashboard.
+- Latency is added by the extra hop (client → Vercel → OpenRouter); not yet measured.
+
+### Discussion
+
+This is the same shape of problem as the local AI server in [Section 5](#5-local-ai-server-windows-pc), solved from the opposite direction: Section 5 keeps models on-premises for privacy, this route keeps nothing on-premises but keeps the credential server-side. The cost model follows OpenRouter pricing rather than any school subscription. Model choice, rate limits, and whether the function should enforce a per-model allowlist (so the URL cannot be used to call arbitrary expensive models) are left for a later entry.
+
