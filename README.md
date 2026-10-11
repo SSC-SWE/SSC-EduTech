@@ -4,7 +4,7 @@ Improving technology for education.
 
 ## Abstract
 
-SSC-EduTech is an education-technology exploration of several AI systems, with each system tried on a different kind of school work. These notes record what each one was used for and what was actually written down. Amazon Quick (AWS) automates an Education Bureau (EDB) teacher-training path from the public calendar to a weekly email and then to the teacher's calendar, including a conflict message and an override reply. OpenManusBot is under test for multi-agent task automation and councils, with Composio connectors, a 20-minute turn limit, and a short rule against repeated tool calls. GrokBot is the desktop coordinator for orchestration, repository and site work, documentation, and handoffs to other agents, and was given a full software project to build: ASR, a local speech-recognition tool in my GitHub, where it worked through reviewable pull requests and deployed through computer control. A local Ollama and Qwen deployment was examined for on-prem privacy on one dual-GPU workstation. Z.ai assisted a printable mechanical design, a buoyancy profiling float, reproduced here as a four-panel print-plate figure. A later entry works through 3D modelling with ZCode and Kimi: generating STL files directly, drawing through Onshape's FeatureScript MCP, and the newer Kimi MCP route into Fusion 360 and Blender. A final entry records a network workaround: an OpenRouter API key routed through a Vercel serverless function so Claude and OpenAI models can be called from school without a VPN.
+SSC-EduTech is an education-technology exploration of several AI systems, with each system tried on a different kind of school work. These notes record what each one was used for and what was actually written down. Amazon Quick (AWS) automates an Education Bureau (EDB) teacher-training path from the public calendar to a weekly email and then to the teacher's calendar, including a conflict message and an override reply. OpenManusBot is under test for multi-agent task automation and councils, with Composio connectors, a 20-minute turn limit, and a short rule against repeated tool calls. GrokBot is the desktop coordinator for orchestration, repository and site work, documentation, and handoffs to other agents, and was given a full software project to build: ASR, a local speech-recognition tool in my GitHub, where it worked through reviewable pull requests and deployed through computer control. A mixed GrokBot and Hermes case uses that same pull-request surface for review: the smarter Grok Bot model posts the final review comments, on an 8:30 pm HKT pass or on demand, and the cheaper bot on the Hermes server writes the code from those comments. A local Ollama and Qwen deployment was examined for on-prem privacy on one dual-GPU workstation. Z.ai assisted a printable mechanical design, a buoyancy profiling float, reproduced here as a four-panel print-plate figure. A later entry works through 3D modelling with ZCode and Kimi: generating STL files directly, drawing through Onshape's FeatureScript MCP, and the newer Kimi MCP route into Fusion 360 and Blender. A final entry records a network workaround: an OpenRouter API key routed through a Vercel serverless function so Claude and OpenAI models can be called from school without a VPN.
 
 ## 1. Amazon Quick (AWS) Research
 
@@ -49,7 +49,7 @@ OpenManusBot is an alternative to GrokBot ([Section 3](#3-grokbot-building-the-a
 
 Testing so far includes Kimi K3 and OpenCode, which provides a free model. OpenAI-compatible models were also tried. External apps (Gmail, Calendar, Slack, Notion, and others) are reached only through Composio tool calls. The prompt given to the agent is reproduced below in full.
 
-Local 8B and 14B models cannot drive connector MCPs, so they stay off the chief-of-staff role. The working arrangement is a stronger chief of staff — Kimi K3, Grok, or an OpenCode free model — with a local model such as Qwen 120B as the secrets model for material that should stay private. Hardware limits for that local model are in [Section 4](#4-local-ai-server-windows-pc).
+Local 8B and 14B models cannot drive connector MCPs, so they stay off the chief-of-staff role. The working arrangement is a stronger chief of staff — Kimi K3, Grok, or an OpenCode free model — with a local model such as Qwen 120B as the secrets model for material that should stay private. Hardware limits for that local model are in [Section 5](#5-local-ai-server-windows-pc).
 
 ```
 Prompt for Local Agent to Access Tools
@@ -176,9 +176,81 @@ The project itself is a keyboard-first terminal UI for live microphone transcrip
 
 ### Observations
 
-GrokBot uses tokens quickly and is less efficient than regular Codex or ZCode. Its intelligence is nonetheless smarter and stronger in software development. That makes it the more expensive option for an experienced software engineer, but useful when the run is completely autonomous and its stronger reasoning stands in for the engineer.
+GrokBot uses tokens quickly and is less efficient than regular Codex or ZCode. Its intelligence is nonetheless smarter and stronger in software development. That makes it the more expensive option for an experienced software engineer, but useful when the run is completely autonomous and its stronger reasoning stands in for the engineer. [Section 4](#4-grokbot--hermes-github-pr-review-loop) keeps that stronger model on the final review and hands the code to a cheaper Hermes bot.
 
-## 4. Local AI Server (Windows PC)
+## 4. GrokBot + Hermes: GitHub PR review loop
+
+This entry splits one pull-request job across two agents. The smarter Grok Bot model does the final review. The cheaper bot on the Hermes server writes the code. They share the GitHub PR — the head SHA and the review comments — and do not need a private bot-to-bot message.
+
+### Methods
+
+Grok Bot is chief of staff. It reviews open web pull requests and posts GitHub review comments or issues only. It does not implement the fixes. The standing pass is 8:30 pm HKT (`Asia/Hong_Kong`). The same review can be started on demand.
+
+Hermes Agent implements the fixes named in those comments. The cheaper bot on the Hermes server is the one that writes the code and pushes it back onto the same PR.
+
+`grok_review_monitor.sh` runs every 2 minutes. The script is plain bash and spends zero LLM tokens. Each tick prints one fingerprint per open PR:
+
+```
+pr=<n> head=<sha> last_ai_review=<iso|none>
+```
+
+Hermes hashes that output and compares it with the previous tick.
+
+- An identical fingerprint, which is most ticks, leaves Hermes asleep. The cost of the tick is a `gh` API call and a hash.
+- A different fingerprint wakes Hermes and injects the fingerprint diff into the prompt, so it knows which PR has a fresh Grok review.
+
+The script answers whether there is anything to do. The LLM runs only when there is something to act on.
+
+Grok stays on the expensive review path. Hermes stays on the cheaper implement path. The monitor in between spends no tokens.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Ryan
+  participant Grok as Grok Bot<br/>(Chief of Staff)<br/>expensive review
+  participant GH as GitHub PR
+  participant Mon as grok_review_monitor.sh<br/>(every 2 min, $0 tokens)
+  participant Hermes as Hermes Agent<br/>cheaper implement
+
+  Note over Grok: Evening 8:30pm HKT<br/>or on-demand review<br/>smarter model, comments only
+  Grok->>GH: Post review comments / issues
+  loop Every 2 minutes
+    Mon->>GH: Fingerprint open PRs<br/>pr + head SHA + last_ai_review
+    alt Fingerprint unchanged
+      Mon-->>Mon: Stay asleep (no LLM)
+    else Fingerprint changed
+      Mon->>Hermes: Wake + inject fingerprint diff
+      Hermes->>GH: Read Grok review, push fixes
+    end
+  end
+  opt Re-review
+    Grok->>GH: Re-check after new head / Ryan ask
+  end
+  Ryan-->>Grok: Only when findings / decisions
+```
+
+The flowchart is the same loop counted in tokens. Every two minutes the monitor hashes the fingerprint. Hermes wakes only when that hash changes, writes the fixes, and pushes. A new head can send the PR back to Grok for another expensive review.
+
+```mermaid
+flowchart LR
+  subgraph cheap["Cheap path — every 2 min"]
+    S[grok_review_monitor.sh] -->|gh API + hash| F{Fingerprint<br/>changed?}
+    F -->|No| Z[Hermes asleep<br/>0 tokens]
+  end
+  subgraph implement["Cheaper implement path — only when needed"]
+    F -->|Yes| H[Hermes wakes<br/>cheaper bot writes code]
+    H --> Fix[Implement review fixes]
+    Fix --> Push[Push to PR]
+  end
+  G[Grok Bot review<br/>expensive smarter model] -->|comments on PR| F
+  Push -.->|new head / later| G
+```
+
+### Observations
+
+Review is the expensive step, and it stops at the comment. Grok Bot's stronger model posts the review; the cheaper Hermes bot writes the patch. On a quiet evening Hermes does not run at all: two minutes of polling is a GitHub read and a hash, and tokens start when the fingerprint changes. A push from Hermes changes the head SHA, so the next fingerprint can carry the PR back to Grok. Ryan is in the loop for findings and decisions.
+
+## 5. Local AI Server (Windows PC)
 A Windows PC runs models through [Ollama](https://ollama.com) and exposes an OpenAI-compatible API on port `11434`. opencode and OpenManusBot both point at this one endpoint, and [Tailscale](https://tailscale.com) makes the same address work from home or any other network.
 
 ### 1. Server setup (Windows)
@@ -244,7 +316,7 @@ Point it at the same endpoint: `base_url` = `http://<pc-ip>:11434/v1`, any non-e
 - As noted in the OpenManusBot section above, 8B/14B local models handle tool-calling and MCP connectors poorly — use them for auxiliary roles and keep a strong cloud model as chief of staff.
 - A Mixture-of-Experts (MoE) model trades intelligence for speed: Qwen3-30B-A3B (`ollama pull qwen3:30b-a3b` — 30B total parameters, only ~3B active per token) raises local generation from about 10 to 56 tokens/s. The 3B active slice is less smart, though, so the gmail problem stands: like the 8B/14B models it still cannot drive the connector MCPs that OpenManusBot needs ([Section 2](#2-openmanusbot)).
 
-## 5. 3D Modelling with ZCode and Kimi
+## 6. 3D Modelling with ZCode and Kimi
 
 This section is a tutorial for getting a 3D model out of an AI agent, written after trying three routes. The short version: an agent can hand you a printable STL file directly, but that file is slow to generate, expensive in tokens, and cannot be modified afterwards. The MCP routes — Onshape, and now Fusion 360 and Blender through Kimi — produce models that stay editable, and are the better workshop for anything you will iterate on.
 
@@ -307,7 +379,7 @@ The first figure is the finished render; the second is the Blender viewport duri
 
 Timing and token counts for the two MCP routes are left for a later entry, as with the email flows in [Section 1](#1-amazon-quick-aws-research).
 
-## 6. OpenRouter through Vercel: calling Claude and OpenAI from school without a VPN
+## 7. OpenRouter through Vercel: calling Claude and OpenAI from school without a VPN
 
 This section records a network workaround built on 2026-10-08: putting an OpenRouter API key behind a Vercel serverless function so that frontier models (Claude, OpenAI) can be used from the school network without installing or running a VPN.
 
@@ -327,5 +399,5 @@ The school network blocks direct access to Claude and OpenAI; the usual workarou
 
 ### Discussion
 
-This is the same shape of problem as the local AI server in [Section 4](#4-local-ai-server-windows-pc), solved from the opposite direction: Section 4 keeps models on-premises for privacy, this route keeps nothing on-premises but keeps the credential server-side. The cost model follows OpenRouter pricing rather than any school subscription. Model choice, rate limits, and whether the function should enforce a per-model allowlist (so the URL cannot be used to call arbitrary expensive models) are left for a later entry.
+This is the same shape of problem as the local AI server in [Section 5](#5-local-ai-server-windows-pc), solved from the opposite direction: Section 5 keeps models on-premises for privacy, this route keeps nothing on-premises but keeps the credential server-side. The cost model follows OpenRouter pricing rather than any school subscription. Model choice, rate limits, and whether the function should enforce a per-model allowlist (so the URL cannot be used to call arbitrary expensive models) are left for a later entry.
 
