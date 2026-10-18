@@ -426,13 +426,13 @@ The pieces, in the order a request flows:
 sequenceDiagram
   participant Grok as Grok Bot<br/>(reviewer)
   participant GH as GitHub
-  participant CF as Cloudflare Tunnel<br/>webhook.<domain>
+  participant CF as Cloudflare Tunnel<br/>public webhook URL
   participant R as Receiver<br/>127.0.0.1:8644, $0 tokens
   participant H as Hermes job<br/>(implement bot)
   Grok->>GH: review comment
   GH->>CF: POST + X-Hub-Signature-256
   CF->>R: tunnel (no port forwarding, no sudo)
-  R->>R: verify HMAC; filter bots; match body fingerprint
+  R->>R: verify HMAC, filter bots, match body fingerprint
   alt qualifying review
     R->>H: fire job
     H->>GH: read review, push fixes
