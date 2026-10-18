@@ -4,7 +4,7 @@ Improving technology for education.
 
 ## Abstract
 
-SSC-EduTech is an education-technology exploration of several AI systems, with each system tried on a different kind of school work. These notes record what each one was used for and what was actually written down. Amazon Quick (AWS) automates an Education Bureau (EDB) teacher-training path from the public calendar to a weekly email and then to the teacher's calendar, including a conflict message and an override reply. OpenManusBot is under test for multi-agent task automation and councils, with Composio connectors, a 20-minute turn limit, and a short rule against repeated tool calls. GrokBot is the desktop coordinator for orchestration, repository and site work, documentation, and handoffs to other agents, and was given a full software project to build: ASR, a local speech-recognition tool in my GitHub, where it worked through reviewable pull requests and deployed through computer control. A mixed GrokBot and Hermes case uses that same pull-request surface for review: the smarter Grok Bot model posts the final review comments, on an 8:30 pm HKT pass or on demand, and the cheaper bot on the Hermes server writes the code from those comments. A local Ollama and Qwen deployment was examined for on-prem privacy on one dual-GPU workstation, where context length proves to be one of the main hurdles for a local model reading email — one OpenManusBot message already costs about 40k tokens — favouring smaller models at the largest context the VRAM allows. Z.ai assisted a printable mechanical design, a buoyancy profiling float, reproduced here as a four-panel print-plate figure. A later entry works through 3D modelling with ZCode and Kimi: generating STL files directly, drawing through Onshape's FeatureScript MCP, and the newer Kimi MCP route into Fusion 360 and Blender. A final entry records a network workaround: an OpenRouter API key routed through a Vercel serverless function so Claude and OpenAI models can be called from school without a VPN.
+SSC-EduTech is an education-technology exploration of several AI systems, with each system tried on a different kind of school work. These notes record what each one was used for and what was actually written down. Amazon Quick (AWS) automates an Education Bureau (EDB) teacher-training path from the public calendar to a weekly email and then to the teacher's calendar, including a conflict message and an override reply. OpenManusBot is under test for multi-agent task automation and councils, with Composio connectors, a 20-minute turn limit, and a short rule against repeated tool calls. GrokBot is the desktop coordinator for orchestration, repository and site work, documentation, and handoffs to other agents, and was given a full software project to build: ASR, a local speech-recognition tool in my GitHub, where it worked through reviewable pull requests and deployed through computer control. A mixed GrokBot and Hermes case uses that same pull-request surface for review: the smarter Grok Bot model posts the final review comments, on an 8:30 pm HKT pass or on demand, and the cheaper bot on the Hermes server writes the code from those comments. A local Ollama and Qwen deployment was examined for on-prem privacy on one dual-GPU workstation, where context length proves to be one of the main hurdles for a local model reading email — one OpenManusBot message already costs about 40k tokens — favouring smaller models at the largest context the VRAM allows. Z.ai assisted a printable mechanical design, a buoyancy profiling float, reproduced here as a four-panel print-plate figure. A later entry works through 3D modelling with ZCode and Kimi: generating STL files directly, drawing through Onshape's FeatureScript MCP, and the newer Kimi MCP route into Fusion 360 and Blender. A final entry records a network workaround: an OpenRouter API key routed through a Vercel serverless function so Claude and OpenAI models can be called from school without a VPN. The latest entry replaces that review loop's two-minute poll with a GitHub webhook: review events are pushed through a Cloudflare Tunnel to a small HMAC-checking receiver on the Hermes server, which wakes the implement bot only when a real review lands.
 
 ## 1. Amazon Quick (AWS) Research
 
@@ -248,7 +248,7 @@ flowchart LR
 
 ### Observations
 
-Review is the expensive step, and it stops at the comment. Grok Bot's stronger model posts the review; the cheaper Hermes bot writes the patch. On a quiet evening Hermes does not run at all: two minutes of polling is a GitHub read and a hash, and tokens start when the fingerprint changes. A push from Hermes changes the head SHA, so the next fingerprint can carry the PR back to Grok. Ryan is in the loop for findings and decisions.
+Review is the expensive step, and it stops at the comment. Grok Bot's stronger model posts the review; the cheaper Hermes bot writes the patch. On a quiet evening Hermes does not run at all: two minutes of polling is a GitHub read and a hash, and tokens start when the fingerprint changes. A push from Hermes changes the head SHA, so the next fingerprint can carry the PR back to Grok. Ryan is in the loop for findings and decisions. (This poll design was later replaced by the push-based webhook in [Section 8](#8-github-webhooks-pushing-review-events-to-the-agent-instead-of-polling).)
 
 ## 5. Local AI Server (Windows PC)
 A Windows PC runs models through [Ollama](https://ollama.com) and exposes an OpenAI-compatible API on port `11434`. opencode and OpenManusBot both point at this one endpoint, and [Tailscale](https://tailscale.com) makes the same address work from home or any other network.
@@ -401,4 +401,58 @@ The school network blocks direct access to Claude and OpenAI; the usual workarou
 ### Discussion
 
 This is the same shape of problem as the local AI server in [Section 5](#5-local-ai-server-windows-pc), solved from the opposite direction: Section 5 keeps models on-premises for privacy, this route keeps nothing on-premises but keeps the credential server-side. The cost model follows OpenRouter pricing rather than any school subscription. Model choice, rate limits, and whether the function should enforce a per-model allowlist (so the URL cannot be used to call arbitrary expensive models) are left for a later entry.
+
+## 8. GitHub webhooks: pushing review events to the agent instead of polling
+
+This entry replaces the every-2-minute monitor of [Section 4](#4-grokbot--hermes-github-pr-review-loop) with a push-based trigger: GitHub itself calls the agent server the moment a review lands, and nothing runs in between.
+
+### Motivation
+
+An audit of eight days of session telemetry on the review loop showed the poll design wasted about half of its agent runs. The fingerprint included the pull-request head SHA, so every push — including the implement bot's own — changed the hash and woke the agent, which re-read the open pull requests, found no new review comments, and answered with a one-line "nothing new". Each of those no-op wakes paid a full agent context in cached input tokens, and the real fixes were the other half. Moving the wake signal out of a timer and into GitHub's own event removes both costs at once: the agent should run when a review arrives, and not run otherwise.
+
+### Methods
+
+The pieces, in the order a request flows:
+
+1. **A GitHub webhook on the project repo** — events `pull_request_review` and `issue_comment`, content type JSON, and a random 32-byte secret. GitHub signs every delivery with that secret (`X-Hub-Signature-256`: HMAC-SHA256 over the raw body).
+
+2. **A public HTTPS endpoint for the agent server** — the server sits behind NAT with no admin rights, so the endpoint is a Cloudflare Tunnel on a domain already in the account's Cloudflare: a named tunnel created through the Cloudflare API (remotely managed), an ingress rule mapping `webhook.<domain>` to `http://127.0.0.1:8644`, and a proxied CNAME to `<tunnel-id>.cfargotunnel.com`. The connector is the stock `cloudflared` binary run as a systemd **user** unit (`cloudflared tunnel run`, tunnel token in a `600`-permission environment file), so nothing needs sudo and it survives reboots.
+
+3. **A small receiver on the agent server** — about a hundred lines of Python standard library (`http.server`), run as another systemd user unit listening on `127.0.0.1:8644`. Per delivery it verifies `X-Hub-Signature-256` with `hmac.compare_digest` (unsigned or mismatched → 403, logged); answers the hook-registration `ping` with 200; ignores everything that is not a review submission or a PR comment; applies the Section 4 fingerprints (skip known bot logins, whose replies quote the reviewer's keywords; match the reviewer's phrase markers in the body, because the reviewer posts under a human account and cannot be recognised by login); and fires the existing agent job as a detached subprocess, returning 200 immediately. The job's own prompt re-reads the repository state, so the webhook only has to be a doorbell, not a message.
+
+4. **Retiring the schedule without deleting the job** — the triggerable job is the webhook's target, so it can be neither deleted nor paused (paused jobs reject explicit runs with "Job is paused/disabled"). Its cron schedule moves instead to one that effectively never fires (`0 0 29 2 *` — next occurrence February 2028, and harmless even then, because the internal change-detector suppresses a no-op run). The definition stays enabled and runnable on demand; no ticks ever poll.
+
+```mermaid
+sequenceDiagram
+  participant Grok as Grok Bot<br/>(reviewer)
+  participant GH as GitHub
+  participant CF as Cloudflare Tunnel<br/>webhook.<domain>
+  participant R as Receiver<br/>127.0.0.1:8644, $0 tokens
+  participant H as Hermes job<br/>(implement bot)
+  Grok->>GH: review comment
+  GH->>CF: POST + X-Hub-Signature-256
+  CF->>R: tunnel (no port forwarding, no sudo)
+  R->>R: verify HMAC; filter bots; match body fingerprint
+  alt qualifying review
+    R->>H: fire job
+    H->>GH: read review, push fixes
+  else bot or unrelated comment
+    R-->>R: 204, agent never runs
+  end
+```
+
+**Verification, in order.** The hook-registration ping returns 200 and shows in the receiver's log. A forged signature is refused 403. A signed synthetic review event fired on loopback reaches the job ("Triggered… succeeded"). The job's internal change-detector still gates every run, which is coherent rather than conflicting: a real review changes the monitor fingerprint, so the gate passes on exactly the events the webhook fires for.
+
+### Observations
+
+- The scheduled ticks are gone entirely; the only thing that wakes the agent is a qualifying GitHub delivery.
+- Debugging order when a review goes unanswered: the repo's webhook deliveries page (per-delivery status codes), then the receiver's log (every accept, deny, and fire is written), then the two systemd units.
+- The Cloudflare edge refuses non-browser test requests with error 1010 (bot protection) even when the tunnel and receiver are healthy — synthetic tests belong on loopback, with the signature computed by hand.
+- Editing a GitHub hook by PATCHing only `config[url]` silently drops the stored secret and resets the content type; always send `url`, `content_type`, and `secret` together, then re-ping.
+- Tailscale Funnel does not work from a userspace-networking daemon: the edge returns 502 because the unprivileged tailscaled never binds the public port. The Cloudflare tunnel is the route that needs neither sudo nor router access.
+- Swapping the monitor script flips the stored output hash once, which costs exactly one extra agent run as the new baseline.
+
+### Discussion
+
+Section 4's monitor is still the right shape when the agent server cannot expose any public endpoint, and it survives here as the job's internal change-detector. The webhook replaces the timer with the event itself: latency falls from up to two minutes to seconds, idle cost falls from two API reads per tick to zero, and — the part the audit actually paid for — the agent's attention stops being spent on pushes and merges that contain no review. Per-pipeline token accounting and the reviewer-model choice are left for a later entry.
 
