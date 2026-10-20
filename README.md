@@ -4,7 +4,7 @@ Improving technology for education.
 
 ## Abstract
 
-SSC-EduTech is an education-technology exploration of several AI systems, with each system tried on a different kind of school work. These notes record what each one was used for and what was actually written down. Amazon Quick (AWS) automates an Education Bureau (EDB) teacher-training path from the public calendar to a weekly email and then to the teacher's calendar, including a conflict message and an override reply. OpenManusBot is under test for multi-agent task automation and councils, with Composio connectors, a 20-minute turn limit, and a short rule against repeated tool calls. GrokBot is the desktop coordinator for orchestration, repository and site work, documentation, and handoffs to other agents, and was given a full software project to build: ASR, a local speech-recognition tool in my GitHub, where it worked through reviewable pull requests and deployed through computer control. A mixed GrokBot and Hermes case uses that same pull-request surface for review: the smarter Grok Bot model posts the final review comments, on an 8:30 pm HKT pass or on demand, and the cheaper bot on the Hermes server writes the code from those comments. A local Ollama and Qwen deployment was examined for on-prem privacy on one dual-GPU workstation, where context length proves to be one of the main hurdles for a local model reading email — one OpenManusBot message already costs about 40k tokens — favouring smaller models at the largest context the VRAM allows. Z.ai assisted a printable mechanical design, a buoyancy profiling float, reproduced here as a four-panel print-plate figure. A later entry works through 3D modelling with ZCode and Kimi: generating STL files directly, drawing through Onshape's FeatureScript MCP, and the newer Kimi MCP route into Fusion 360 and Blender. A final entry records a network workaround: Anthropic and OpenAI region-block Hong Kong, so an OpenRouter API key is routed through a Vercel serverless function instead, and Claude and OpenAI models are called from school without a VPN. The latest entry replaces that review loop's two-minute poll with a GitHub webhook: review events are pushed through a Cloudflare Tunnel to a small HMAC-checking receiver on the Hermes server, which wakes the implement bot only when a real review lands.
+SSC-EduTech is an education-technology exploration of several AI systems, with each system tried on a different kind of school work. These notes record what each one was used for and what was actually written down. Amazon Quick (AWS) automates an Education Bureau (EDB) teacher-training path from the public calendar to a weekly email and then to the teacher's calendar, including a conflict message and an override reply. OpenManusBot is under test for multi-agent task automation and councils, with Composio connectors, a 20-minute turn limit, and a short rule against repeated tool calls. GrokBot is the desktop coordinator for orchestration, repository and site work, documentation, and handoffs to other agents, and was given a full software project to build: ASR, a local speech-recognition tool in my GitHub, where it worked through reviewable pull requests and deployed through computer control. A mixed GrokBot and Hermes case uses that same pull-request surface for review: the smarter Grok Bot model posts the final review comments, on an 8:30 pm HKT pass or on demand, and the cheaper bot on the Hermes server writes the code from those comments. A local Ollama and Qwen deployment was examined for on-prem privacy on one dual-GPU workstation, where context length proves to be one of the main hurdles for a local model reading email — one OpenManusBot message already costs about 40k tokens — favouring smaller models at the largest context the VRAM allows. Z.ai assisted a printable mechanical design, a buoyancy profiling float, reproduced here as a four-panel print-plate figure. A later entry works through 3D modelling with ZCode and Kimi: generating STL files directly, drawing through Onshape's FeatureScript MCP, and the newer Kimi MCP route into Fusion 360 and Blender. A final entry records a network workaround: Anthropic and OpenAI region-block Hong Kong, so an OpenRouter API key is routed through a Vercel serverless function instead, and Claude and OpenAI models are called from school without a VPN. The latest entry replaces that review loop's two-minute poll with a GitHub webhook: review events are pushed through a Cloudflare Tunnel to a small HMAC-checking receiver on the Hermes server, which wakes the implement bot only when a real review lands. A further entry gives the server itself a public name: a free `iengineer.cc.cd` subdomain from DNSHE has its nameservers delegated to Cloudflare, and a locally-managed Cloudflare Tunnel publishes the Hermes server at `hermes.iengineer.cc.cd` with no port forwarding and no sudo — plus the one re-registration the Nous OAuth client needs when its canonical URL moves.
 
 ## 1. Amazon Quick (AWS) Research
 
@@ -463,4 +463,117 @@ sequenceDiagram
 ### Discussion
 
 Section 4's monitor is still the right shape when the agent server cannot expose any public endpoint, and it survives here as the job's internal change-detector. The webhook replaces the timer with the event itself: latency falls from up to two minutes to seconds, idle cost falls from two API reads per tick to zero, and — the part the audit actually paid for — the agent's attention stops being spent on pushes and merges that contain no review. Per-pipeline token accounting and the reviewer-model choice are left for a later entry.
+
+## 9. A free domain from DNSHE and a Cloudflare Tunnel for the Hermes server
+
+This entry records how the Hermes agent server — the machine the desktop app reaches through Remote gateway — was moved off its rented ngrok address onto its own hostname, `hermes.iengineer.cc.cd`. The domain is a free subdomain registered at [DNSHE](https://www.dnshe.com) with its nameservers delegated to Cloudflare, and the public path is a locally-managed Cloudflare Tunnel. Nothing was bought, no router port was forwarded, and no sudo was used anywhere in the chain.
+
+### Motivation
+
+Two gaps from earlier entries meet here. [Section 5](#5-local-ai-server-windows-pc) made a server reachable privately (Tailscale, later ZeroTier), but a public URL needs a domain and TLS on top. [Section 8](#8-github-webhooks-pushing-review-events-to-the-agent-instead-of-polling) already used a Cloudflare Tunnel for webhooks — on a domain that already lived in the account's Cloudflare. The missing piece here was the domain itself: none was owned, and the ngrok free static domain (`unripe-unlovable-luckiness.ngrok-free.dev`) was serviceable but second-hand. There is also a hard reason a stable hostname matters: the Nous portal pins each registered dashboard client to one canonical URL, so the OAuth sign-in follows the domain. A permanent URL is not cosmetic — it is what the login callback is built from.
+
+DNSHE is a free subdomain registrar: suffixes `us.ci`, `cc.cd`, `de5.net`, and `ccwu.cc`, Anycast DNS, a REST API, no credit card. A registration runs one year and can be renewed for free within 180 days before expiry; a "Permanent Domain Upgrade" in the Feature Center removes renewal entirely. Crucially it allows changing NS records, which is what makes the Cloudflare half of this entry possible.
+
+### Methods
+
+**1. Register the subdomain at DNSHE, delegate DNS to Cloudflare.** Sign up at dnshe.com, search for a prefix under Manage domains, pick the `.cc.cd` suffix, and register — here `iengineer.cc.cd`. Then add the domain as a site in Cloudflare (free plan): Cloudflare accepts the subdomain as a zone and prints two assigned nameservers. Paste those into DNSHE's NS settings for the domain and wait for the zone to show active in Cloudflare. From this point DNS for the name is managed by Cloudflare, and the tunnel step below writes its own records.
+
+**2. Install cloudflared without sudo.**
+
+```bash
+mkdir -p ~/.local/bin
+curl -L --fail https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o ~/.local/bin/cloudflared
+chmod +x ~/.local/bin/cloudflared
+```
+
+**3. Log cloudflared in.** `cloudflared tunnel login` prints a dash.cloudflare.com URL: open it in a browser, pick the `iengineer.cc.cd` zone, click Authorize. Two snags cost time here. The printed URL expires — one that sat unclicked for hours had to be replaced by killing the process and running login again for a fresh link. And when the authorising browser cannot hand the result back to the waiting process, it downloads `cert.pem` as an ordinary file (on this machine into `~/Downloads`) instead of completing the callback. The certificate is installed by moving it into place:
+
+```bash
+mv ~/Downloads/cert.pem ~/.cloudflared/cert.pem
+chmod 600 ~/.cloudflared/cert.pem
+```
+
+`cloudflared tunnel list` then succeeds — an empty list is fine, it proves the login works.
+
+**4. Create the tunnel; let it write its own DNS.**
+
+```bash
+cloudflared tunnel create hermes
+cloudflared tunnel route dns hermes hermes.iengineer.cc.cd
+```
+
+The first command writes a credentials JSON into `~/.cloudflared`; the second adds the proxied CNAME `hermes.iengineer.cc.cd → <tunnel-id>.cfargotunnel.com` to the Cloudflare zone automatically — no manual record editing.
+
+**5. Point the ingress at the existing path-proxy.** On this server a small node proxy already listens on `127.0.0.1:9000`, splitting `/tc/...` to the transcriber web app on `:8787` (stripping the prefix, upgrading WebSockets) and sending everything else to `hermes serve` on `:9119`. cloudflared has no prefix-strip rule, so the proxy stays and becomes the tunnel's single origin. `~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: <tunnel-id>
+credentials-file: <home>/.cloudflared/<tunnel-id>.json
+
+ingress:
+  - hostname: hermes.iengineer.cc.cd
+    service: http://localhost:9000
+  - service: http_status:404
+```
+
+**6. Run it as a systemd user service.** `~/.config/systemd/user/cloudflared.service`:
+
+```ini
+[Unit]
+Description=Cloudflare Tunnel: hermes.iengineer.cc.cd -> path-proxy :9000
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/cloudflared tunnel run hermes
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now cloudflared.service
+```
+
+User units need no root and, with lingering enabled, survive reboot.
+
+**7. Point Hermes at the new hostname.** In `~/.hermes/.env` set `HERMES_DASHBOARD_PUBLIC_URL=https://hermes.iengineer.cc.cd` and restart the `hermes-serve` unit. This is the URL the desktop app's Remote gateway connects to, and the URL its OAuth callback is built from.
+
+**8. Re-register the OAuth client — the step that bites.** The Nous portal pins each registered client to the canonical URL it was registered with. Changing the public URL in `.env` alone is not enough: sign-in then dies at the portal with "redirect URL mismatch — does not match the agent's canonical URL or localhost carve-out". The fix is one command, run once the new URL is live:
+
+```bash
+hermes dashboard register --redirect-uri https://hermes.iengineer.cc.cd/auth/callback
+```
+
+Re-sending the stored client id makes the portal update its record in place — the output reads `✓ Updated dashboard "…"`, not "Registered". No serve restart is needed afterwards; the callback is assembled per request from the public URL. Manage or revoke the client at `portal.nousresearch.com/local-dashboards`.
+
+**9. Retire the old tunnel.** `systemctl --user disable --now ngrok.service` — the path-proxy unit stays, since cloudflared feeds it now.
+
+**Verification, in order.**
+
+```bash
+curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" https://hermes.iengineer.cc.cd/
+# 302 https://hermes.iengineer.cc.cd/auth/login?provider=nous&next=%2F
+curl -s -o /dev/null -w "%{http_code}\n" https://hermes.iengineer.cc.cd/tc/
+# 200
+```
+
+The first hop's redirect continues to portal.nousresearch.com carrying `redirect_uri=https://hermes.iengineer.cc.cd/auth/callback` — the new canonical URL. In the desktop app, Settings → Gateways → point the Remote gateway URL at the new hostname and sign in with Nous.
+
+### Observations
+
+- A browser showing "web UI disabled" is success, not failure. `hermes serve` is deliberately headless and answers any plain browser GET with that fixed body; completing the Nous sign-in and landing on that message means OAuth worked. The desktop app is the UI.
+- The whole public path costs nothing: free subdomain, free Cloudflare Tunnel, no port forwarding. cloudflared makes outbound connections only, so router and firewall are untouched.
+- The domain needs attention once a year: free DNSHE registrations run a one-year term with free renewal inside the final 180 days (or the one-time permanent upgrade). If it lapses, the tunnel hostname and the OAuth callback die with it.
+- ngrok ran alongside the new tunnel until the switch was verified — both fed the same `:9000` proxy — so the desktop app never lost connectivity during the move.
+- Shape difference from [Section 8](#8-github-webhooks-pushing-review-events-to-the-agent-instead-of-polling): that tunnel was created through the Cloudflare API (remotely managed; ingress lives in the dashboard) on a domain already in Cloudflare, because its single purpose was a webhook endpoint. This one is locally managed (`config.yml` on the machine) — the simpler shape when the origin configuration belongs to one machine and the domain arrives freshly delegated.
+- DNSHE also exposes a REST API for records, so even the delegation step could be automated; not attempted.
+
+### Discussion
+
+The entry closes the reachability half that [Section 5](#5-local-ai-server-windows-pc) left open: a private mesh link for the second laptop (ZeroTier, unchanged) and now a public TLS hostname for the desktop app, at zero cost. The recurring pattern across Sections 7–9 is that a URL is infrastructure with a lifetime and an owner. The Vercel link is kept unprinted because it authenticates nothing; the Hermes hostname can be printed because authentication is enforced at the endpoint; and the OAuth client treats the domain as identity — change it and the portal must be told with one re-registration. Renewal dates belong in the same mental drawer as API-key rotation.
 
